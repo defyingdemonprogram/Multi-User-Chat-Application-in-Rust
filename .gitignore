@@ -1,2 +1,7 @@
 main
 server
+
+
+# Added by cargo
+
+/target

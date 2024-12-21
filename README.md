@@ -1,11 +1,11 @@
 ## Basic Multi-User Chat Application
 
-### Setting Up
+### Quick Start
 
 1. **Compile and Launch the Program**
    ```bash
-   rustc -o server server.rs
-   ./server
+   cargo build
+   cargo run
    ```
 
 2. **Establish a Server Connection**
@@ -19,3 +19,7 @@
    ```bash
    cat /dev/urandom | nc 127.0.0.1 6969
    ```
+
+#### References
+- [getrandom - Github Repo](https://github.com/rust-random/getrandom)
+- [rustls - Rustls Documentation](https://docs.rs/rustls/latest/rustls/)

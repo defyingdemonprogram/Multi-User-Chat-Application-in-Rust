@@ -114,8 +114,8 @@ fn server(messages: Receiver<Message>, token: String) -> Result<()> {
                         if let Ok(text) = str::from_utf8(&bytes) {
                             author.last_message = now;
                             author.strike_count = 0;
-                            println!("INFO: Client {author_addr} sent message {bytes:?}", author_addr=Sens(author_addr));
                             if author.authed {
+                                println!("INFO: Client {author_addr} sent message {bytes:?}", author_addr=Sens(author_addr));
                                 for (addr, client) in clients.iter() {
                                     if *addr != author_addr {
                                         let _ = writeln!(client.conn.as_ref(), "{text}").map_err(|err| {
@@ -131,6 +131,7 @@ fn server(messages: Receiver<Message>, token: String) -> Result<()> {
                                         eprintln!("ERROR: could not send welcome message to {}: {}", Sens(author_addr), Sens(err));
                                     });
                                 } else {
+                                    println!("INFO: {} failed authorization!", Sens(author_addr));
                                     let _ = writeln!(author.conn.as_ref(), "Invalid token! Bruh!").map_err(|err| {
                                         eprintln!("ERROR: could not notify client {} about invalid token: {}", Sens(author_addr), Sens(err));
                                     });

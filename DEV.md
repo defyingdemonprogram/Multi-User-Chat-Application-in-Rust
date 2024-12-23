@@ -207,15 +207,39 @@ Be cautious of integer overflow, which occurs when a value exceeds the variable'
 Rust has two floating point `f64`(double precision) which is default in rust and `f32` which is single precision.
 
 ### FAQ
-1. Where NOT to use Semicolins?
-Ans: If we are not returning a value a value from function or closure, we dibit need a semicolon in end of the return expression
-```rust
-fn calculate() -> i32 {
-    let x = 5;
-    let y = 10;
-    x+y
-}
-```
+
+1. **When should you NOT use a semicolon in Rust?**
+
+   **Answer:** In Rust, you don't need a semicolon when returning a value from a function or closure, as long as the return value is the last expression in the block. If there is no explicit return keyword, the result of the final expression is automatically returned. 
+
+   Example:
+   ```rust
+   fn calculate() -> i32 {
+       let x = 5;
+       let y = 10;
+       x + y  // No semicolon needed here
+   }
+   ```
+
+2. **What does the `!` symbol mean in Rust?**
+
+   **Answer:** In Rust, the `!` symbol is used in two primary contexts:
+   
+   - **Logical NOT operator:** It negates a boolean value.
+   - **Macro invocation:** It indicates that something is a macro rather than a function. Macros in Rust are invoked with an exclamation mark following their name.
+   
+   Some common examples of macros using `!` are:
+   
+   - `print!`: Prints text to the console without a newline at the end.
+     ```rust
+     print!("Hello, World!");
+     ```
+   
+   - `println!`: Prints text to the console and appends a newline at the end.
+     ```rust
+     println!("Hello, World!");
+     ```
+
 
 ##### References:
 **From Rust Documentation**

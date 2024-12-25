@@ -254,3 +254,4 @@ Rust has two floating point `f64`(double precision) which is default in rust and
 - [Module sync Struct Arc](https://doc.rust-lang.org/stable/std/sync/struct.Arc.html): A thread-safe reference-counting pointer, allowing shared ownership across threads.
 - [Module mpsc](https://doc.rust-lang.org/stable/std/sync/mpsc/index.html): Provides multi-producer, single-consumer channels for message passing between threads.
 - [Module net](https://doc.rust-lang.org/stable/std/net/index.html): Defines networking primitives for TCP and UDP communication.
+- [Module env](https://doc.rust-lang.org/std/env/index.html): Inspection and manipulation of the process’s environment.

@@ -15,7 +15,7 @@
    ```
    Alternatively, you can start the client with:
    ```bash
-   cargo run --bin client
+   cargo run --bin client 127.0.0.1
    ```
 
 3. **Perform a Stress Test on the Server**

@@ -32,6 +32,7 @@
 
 #### Command for the Client
 - `/connect <server ip>`: Connects client to server
+- `/quit`: Quit the client(must be offline state)
 
 #### References
 - [getrandom - GitHub Repository](https://github.com/rust-random/getrandom)

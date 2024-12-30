@@ -32,7 +32,9 @@
 
 #### Command for the Client
 - `/connect <server ip>`: Connects client to server
-- `/quit`: Quit the client(must be offline state)
+- `/disconnect`: Disconnect the clinet from server
+- `/quit`: Quit the client
+
 
 #### References
 - [getrandom - GitHub Repository](https://github.com/rust-random/getrandom)

@@ -66,13 +66,7 @@ fn status_bar(qc: &mut impl QueueableCommand, label: &str, x: usize, y: usize, w
 }
 
 fn main() -> io::Result<()> {
-    let mut args = env::args();
-    let _program = args.next().expect("program name");
-    let ip = args.next().expect("provide ip mf");
-
-    let mut stream = TcpStream::connect(&format!("{ip}:6969"))?;
-    let _ = stream.set_nonblocking(true)?;
-
+    let mut stream: Option<TcpStream> = None;
     let mut stdout = stdout();
     let _raw_mode = RawMode::enable()?;
     let (mut w, mut h) = terminal::size()?;
@@ -103,8 +97,24 @@ fn main() -> io::Result<()> {
                             prompt.clear();
                         }
                         KeyCode::Enter => {
-                            stream.write(prompt.as_bytes())?;
-                            chat.push(prompt.clone());
+                            if let Some(ref mut stream) = &mut stream {
+                                stream.write(prompt.as_bytes())?;
+                                chat.push(prompt.clone());
+                            } else {
+                                if let Some(ip) = prompt.strip_prefix("/connect ") {
+                                    stream = TcpStream::connect(&format!("{ip}:6969")).and_then(|stream| {
+                                        stream.set_nonblocking(true)?;
+                                        Ok(stream)
+                                    }).map_err(|err| {
+                                        chat.push(format!("ERROR: Could not connect to {ip}: {err}"))
+                                    }).ok();
+                                    // TODO: handle /connect when you are already connected
+                                    // TODO: implement /disconnect
+                                    // TODO: implement /quit
+                                } else {
+                                    chat.push("You are offline. Use /connect <ip> to connect to a server.".to_string());
+                                }
+                            }
                             prompt.clear();
                         }
                         _ => {},
@@ -114,21 +124,25 @@ fn main() -> io::Result<()> {
             }
         }
 
-        match stream.read(&mut buf) {
-            Ok(n) => {
-                if n > 0 {
-                    if let Some(line) = sanitize_terminal_output(&buf[..n]) {
-                        chat.push(line)
+        if let Some(ref mut s) = &mut stream {
+            match s.read(&mut buf) {
+                Ok(n) => {
+                    if n > 0 {
+                        if let Some(line) = sanitize_terminal_output(&buf[..n]) {
+                            chat.push(line)
+                        }
+                    } else {
+                        stream = None;
+                        chat.push(format!("Server closed the connection"));
                     }
-                } else {
-                    quit = true;
+                }
+                Err(err) => if err.kind() != ErrorKind::WouldBlock {
+                    stream = None;
+                    chat.push(format!("ERROR: {err}"));
                 }
             }
-            Err(err) => if err.kind() != ErrorKind::WouldBlock {
-                return Err(err);
-            }
         }
-
+        
         stdout.queue(Clear(ClearType::All))?;
 
         stdout.queue(MoveTo(0, 0))?;
@@ -139,10 +153,15 @@ fn main() -> io::Result<()> {
             w: w as usize,
             h: h as usize-3,
         })?;
-        status_bar(&mut stdout, "Status: Connected", 0, h as usize-2, w.into())?;
+        if stream.is_some() {
+            status_bar(&mut stdout, "Status: Online", 0, h as usize-2, w.into())?;
+        } else {
+            status_bar(&mut stdout, "Status: Offline", 0, h as usize-2, w.into())?;
+        }
         stdout.queue(MoveTo(0, h-1))?;
         stdout.queue(Print(prompt.get(0..(w - 2) as usize).unwrap_or(&prompt)))?;
 
+        // TODO: mouse selection does not work
         stdout.flush()?;
 
         thread::sleep(Duration::from_millis(33));

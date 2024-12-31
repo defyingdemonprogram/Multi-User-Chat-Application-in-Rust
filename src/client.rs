@@ -99,6 +99,54 @@ macro_rules! chat_info {
 }
 
 #[derive(Default)]
+struct Prompt {
+    buffer: String,
+    cursor: usize,
+}
+
+impl Prompt {
+    fn insert(&mut self, x: char) {
+        if self.cursor > self.buffer.len() {
+            self.cursor = self.buffer.len()
+        }
+        self.buffer.insert(self.cursor, x);
+        self.cursor += 1;
+    }
+
+    fn left(&mut self) {
+        if self.cursor > 0 {
+            self.cursor -= 1;
+        }
+    }
+
+    fn right(&mut self) {
+        if self.cursor < self.buffer.len() {
+            self.cursor += 1;
+        }
+    }
+
+    fn backspace(&mut self) {
+        if self.cursor > 0 {
+            self.cursor -= 1;
+            self.buffer.remove(self.cursor);
+        }
+    }
+
+    fn before_cursor(&self) -> &str {
+        &self.buffer[..self.cursor]
+    }
+
+    fn after_cursor(&self) -> &str {
+        &self.buffer[self.cursor..]
+    }
+
+    fn clear(&mut self) {
+        self.buffer.clear();
+        self.cursor = 0;
+    }
+}
+
+#[derive(Default)]
 struct Client {
     stream: Option<TcpStream>,
     chat: ChatLog,
@@ -185,7 +233,7 @@ fn main() -> io::Result<()> {
     let mut stdout = stdout();
     let _raw_mode = RawMode::enable()?;
     let (mut w, mut h) = terminal::size()?;
-    let mut prompt = String::new();
+    let mut prompt = Prompt::default();
     let mut buf = [0; 64];
     while !client.quit {
         while poll(Duration::ZERO)? {
@@ -195,7 +243,7 @@ fn main() -> io::Result<()> {
                     h = nh;
                 }
                 Event::Paste(data) => {
-                    prompt.push_str(&data);
+                    prompt.buffer.push_str(&data);
                 }
                 Event::Key(event) => {
                     match event.code {
@@ -203,25 +251,29 @@ fn main() -> io::Result<()> {
                             if x == 'c' && event.modifiers.contains(KeyModifiers::CONTROL) {
                                 client.quit = true;
                             } else {
-                                prompt.push(x);
+                                prompt.insert(x);
                             }
                         }
-                        KeyCode::Esc => {
-                            prompt.clear();
-                        }
-                        KeyCode::Backspace => {
-                            prompt.pop();
-                        }
+                        // TODO: message history scrolling via up/down
+                        // TODO: jump by words
+                        // TODO: basic readline navigation keybindings
+                        KeyCode::Left => prompt.left(),
+                        KeyCode::Right => prompt.right(),
+                        KeyCode::Backspace => prompt.backspace(),
+                        // TODO: delete current character by KeyCode::Delete
+                        // TODO: delete word by Ctrl+W
                         KeyCode::Tab => {
-                            if let Some((prefix, "")) = parse_command(&prompt) {
+                            if let Some((prefix, "")) = parse_command(prompt.before_cursor()) {
                                 if let Some(command) = COMMANDS.iter().find(|command| command.name.starts_with(prefix)) {
-                                    prompt = format!("/{name}", name = command.name);
+                                    // TODO: tab autocompletion should scroll through different
+                                    // variants on each TAB press
+                                    prompt.buffer = format!("/{name}{rest}", name = command.name, rest = &prompt.after_cursor());
+                                    prompt.cursor = command.name.len() + 1;
                                 }
                             }
                         }
                         KeyCode::Enter => {
-                            // TODO: tab autocompletion for slash commands
-                            if let Some((name, argument)) = parse_command(&prompt) {
+                            if let Some((name, argument)) = parse_command(&prompt.buffer) {
                                 if let Some(command) = find_command(name) {
                                     (command.run)(&mut client, &argument);
                                 } else {
@@ -229,8 +281,11 @@ fn main() -> io::Result<()> {
                                 }
                             } else {
                                 if let Some(ref mut stream) = &mut client.stream {
-                                    stream.write(prompt.as_bytes())?;
-                                    chat_msg!(&mut client.chat, "{prompt}");
+                                    stream.write(prompt.buffer.as_bytes())?;
+                                    // TODO: don't display the message if it was not delivered
+                                    // Maybe the server should actually send your own message back.
+                                    // Not sending it back made sense in the telnet times.
+                                    chat_msg!(&mut client.chat, "{text}", text = &prompt.buffer);
                                 } else {
                                     chat_info!(&mut client.chat, "You are offline. Use /connect <ip> to connect to a server.");
                                 }
@@ -267,6 +322,7 @@ fn main() -> io::Result<()> {
 
         stdout.queue(MoveTo(0, 0))?;
         status_bar(&mut stdout, "4at", 0, 0, w.into())?;
+        // TODO: scrolling for chat window
         client.chat.render(&mut stdout, Rect {
             x: 0,
             y: 1,
@@ -280,7 +336,8 @@ fn main() -> io::Result<()> {
             status_bar(&mut stdout, "Status: Offline", 0, h as usize-2, w.into())?;
         }
         stdout.queue(MoveTo(0, h-1))?;
-        stdout.queue(Print(prompt.get(0..(w - 2) as usize).unwrap_or(&prompt)))?;
+        stdout.queue(Print(prompt.buffer.get(0..(w - 2) as usize).unwrap_or(&prompt.buffer)))?;
+        stdout.queue(MoveTo(prompt.cursor as u16, h-1))?;
 
         // TODO: mouse selection does not work
         stdout.flush()?;

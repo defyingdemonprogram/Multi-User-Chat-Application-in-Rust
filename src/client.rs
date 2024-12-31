@@ -14,16 +14,6 @@ struct Rect {
     x: usize, y: usize, w: usize, h: usize,
 }
 
-fn chat_window(qc: &mut impl QueueableCommand, chat: &[(String, Color)], boundary: Rect) -> io::Result<()> {
-    let n = chat.len();
-    let m = n.checked_sub(boundary.h).unwrap_or(0);
-    for (dy, (line, color)) in chat.iter().skip(m).enumerate() {
-        qc.queue(MoveTo(boundary.x as u16, (boundary.y + dy) as u16))?;
-        qc.queue(PrintStyledContent(line.get(0..boundary.w).unwrap_or(&line).with(*color)))?;
-    }
-    Ok(())
-}
-
 struct RawMode;
 
 impl RawMode {
@@ -77,6 +67,16 @@ struct ChatLog {
 impl ChatLog {
     fn push(&mut self, message: String, color: Color) {
         self.items.push((message, color))
+    }
+
+    fn render(&mut self, qc: &mut impl QueueableCommand, boundary: Rect) -> io::Result<()> {
+        let n = self.items.len();
+        let m = n.checked_sub(boundary.h).unwrap_or(0);
+        for (dy, (line, color)) in self.items.iter().skip(m).enumerate() {
+            qc.queue(MoveTo(boundary.x as u16, (boundary.y + dy) as u16))?;
+            qc.queue(PrintStyledContent(line.get(0..boundary.w).unwrap_or(&line).with(*color)))?;
+        }
+        Ok(())
     }
 }
 
@@ -222,7 +222,7 @@ fn main() -> io::Result<()> {
                         KeyCode::Enter => {
                             // TODO: tab autocompletion for slash commands
                             if let Some((name, argument)) = parse_command(&prompt) {
-                                if let Some(command) = COMMANDS.iter().find(|command| command.name == name) {
+                                if let Some(command) = find_command(name) {
                                     (command.run)(&mut client, &argument);
                                 } else {
                                     chat_error!(&mut client.chat, "Unknown command `/{name}`");
@@ -267,7 +267,7 @@ fn main() -> io::Result<()> {
 
         stdout.queue(MoveTo(0, 0))?;
         status_bar(&mut stdout, "4at", 0, 0, w.into())?;
-        chat_window(&mut stdout, &client.chat.items, Rect {
+        client.chat.render(&mut stdout, Rect {
             x: 0,
             y: 1,
             w: w as usize,

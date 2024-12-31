@@ -139,7 +139,7 @@ fn help_command(client: &mut Client, argument: &str) {
             chat_info!(client.chat, "/{name} - {description}", name = command.name, description = command.description);
         }
     } else {
-        if let Some(command) = COMMANDS.iter().find(|command| command.name == name) {
+        if let Some(command) = find_command(name) {
             chat_info!(client.chat, "/{name} - {description}", name = command.name, description = command.description);
         } else {
             chat_error!(&mut client.chat, "Unknown command `/{name}`");
@@ -176,6 +176,10 @@ const COMMANDS: [Command; 4] = [
     },
 ];
 
+fn find_command(name: &str) -> Option<&Command> {
+    COMMANDS.iter().find(|command| command.name == name)
+}
+
 fn main() -> io::Result<()> {
     let mut client = Client::default();
     let mut stdout = stdout();
@@ -207,6 +211,13 @@ fn main() -> io::Result<()> {
                         }
                         KeyCode::Backspace => {
                             prompt.pop();
+                        }
+                        KeyCode::Tab => {
+                            if let Some((prefix, "")) = parse_command(&prompt) {
+                                if let Some(command) = COMMANDS.iter().find(|command| command.name.starts_with(prefix)) {
+                                    prompt = format!("/{name}", name = command.name);
+                                }
+                            }
                         }
                         KeyCode::Enter => {
                             // TODO: tab autocompletion for slash commands

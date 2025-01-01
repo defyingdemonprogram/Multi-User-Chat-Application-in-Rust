@@ -8,19 +8,14 @@
    cargo build
    cargo run --bin server
    ```
+   The generated token will be saved in the `./TOKEN` file.
 
 2. **Connect to the Server**
 
    To start the client, execute:
    ```bash
    $ cargo run --bin client
-   > /connect <server ip>
-   > <authentication token>
-   ```
-
-   Alternatively, you can open two terminal windows and enter the following command in each:
-   ```bash
-   telnet 127.0.0.1 6969
+   > /connect <server ip> <authentication token>
    ```
 
 3. **Perform a Stress Test on the Server**
@@ -31,9 +26,10 @@
    ```
 
 #### Command for the Client
-- `/connect <server ip>`: Connects client to server
+- `/connect <server ip> <token>`: Connects client to server
 - `/disconnect`: Disconnect the clinet from server
 - `/quit`: Quit the client
+- `/help`: Print help
 
 
 #### References

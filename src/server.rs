@@ -62,6 +62,14 @@ enum Sinner {
 }
 
 impl Sinner {
+    fn new() -> Self {
+        Self::Striked(0)
+    }
+
+    fn forgive(&mut self) {
+        *self = Self::Striked(0)
+    }
+
     fn strike(&mut self) -> bool {
         match self {
             Self::Striked(x) => {
@@ -101,7 +109,7 @@ impl Server {
                 Sinner::Banned(banned_at) => {
                     let diff = now.duration_since(*banned_at).unwrap_or_else(|err| {
                         eprintln!("ERROR: ban time check on client connection: the clock might have gone backwards: {err}");
-                        Duration::from_secs(0)
+                        Duration::ZERO
                     });
                     if diff < BAN_LIMIT {
                         let mut author = author.as_ref();
@@ -115,7 +123,7 @@ impl Server {
                         });
                         return;
                     } else {
-                        *sinner = Sinner::Striked(0)
+                        sinner.forgive()
                     }
                 }
                 Sinner::Striked(_) => {}
@@ -139,7 +147,7 @@ impl Server {
 
     fn new_message(&mut self, author_addr: SocketAddr, bytes: &[u8]) {
         if let Some(author) = self.clients.get_mut(&author_addr) {
-            let sinner = self.sinners.entry(author_addr.ip()).or_insert(Sinner::Striked(0));
+            let sinner = self.sinners.entry(author_addr.ip()).or_insert(Sinner::new());
             let now = SystemTime::now();
             let diff = now.duration_since(author.last_message).unwrap_or_else(|err| {
                 eprintln!("ERROR: message rate check on new message: the clock might have gone backwards: {err}");
@@ -147,7 +155,7 @@ impl Server {
             });
             if diff >= MESSAGE_RATE {
                 if let Ok(text) = str::from_utf8(&bytes) {
-                    *sinner = Sinner::Striked(0);
+                    sinner.forgive();
                     author.last_message = now;
                     if author.authed {
                         println!("INFO: Client {author_addr} sent message {bytes:?}", author_addr=Sens(author_addr));
@@ -166,6 +174,8 @@ impl Server {
                                 eprintln!("ERROR: could not send welcome message to {}: {}", Sens(author_addr), Sens(err));
                             });
                         } else {
+                            // TODO: let the user know that they were banned after this attempt
+                            sinner.strike();
                             println!("INFO: {} failed authorization!", Sens(author_addr));
                             let _ = writeln!(author.conn.as_ref(), "Invalid token! Bruh!").map_err(|err| {
                                 eprintln!("ERROR: could not notify client {} about invalid token: {}", Sens(author_addr), Sens(err));
@@ -180,7 +190,7 @@ impl Server {
                     if sinner.strike() {
                         println!("INFO: Client {author_addr} got banned", author_addr=Sens(author_addr));
                         self.clients.retain(|addr, client| {
-                            if addr.ip() == addr.ip() {
+                            if addr.ip() == author_addr.ip() {
                                 let _ = writeln!(client.conn.as_ref(), "You are banned MF").map_err(|err| {
                                     eprintln!("ERROR: Could not send banned message to {addr}: {err}", addr=Sens(addr), err=Sens(err));
                                 });
@@ -232,9 +242,9 @@ fn server(messages: Receiver<Message>, token: String) -> Result<()> {
                             eprintln!("ERROR: slowloris time limit check: the clock might have gone backwards: {err}");
                             SLOWLORIS_LIMIT
                         });
-                        if diff > SLOWLORIS_LIMIT {
+                        if diff >= SLOWLORIS_LIMIT {
                             // TODO: disconnect everyone from addr.ip()
-                            server.sinners.entry(addr.ip()).or_insert(Sinner::Striked(0)).strike();
+                            server.sinners.entry(addr.ip()).or_insert(Sinner::new()).strike();
                             let _ = client.conn.shutdown(Shutdown::Both).map_err(|err| {
                                 eprintln!("ERROR: could not shutdown socket for {addr}: {err}", addr=Sens(addr), err=Sens(err));
                             });

@@ -141,13 +141,16 @@ impl Server {
 
     fn client_disconnected(&mut self, author_addr: SocketAddr) {
         // TODO: we need to distinguish between willful client disconnects and banned disconnects
-        // println!("INFO: Client {author_addr} disconnected", author_addr=Sens(author_addr));
+        // Banned Sinners may try to use this to fill up all the space on the hard drive
+        println!("INFO: Client {author_addr} disconnected", author_addr=Sens(author_addr));
+        // TODO: if the disconnected client was not authorized we may probably want to strike their
+        // IP, because they are probably constantly connecting/disconnecting trying to evade the
+        // strike.
         self.clients.remove(&author_addr);
     }
 
     fn new_message(&mut self, author_addr: SocketAddr, bytes: &[u8]) {
         if let Some(author) = self.clients.get_mut(&author_addr) {
-            let sinner = self.sinners.entry(author_addr.ip()).or_insert(Sinner::new());
             let now = SystemTime::now();
             let diff = now.duration_since(author.last_message).unwrap_or_else(|err| {
                 eprintln!("ERROR: message rate check on new message: the clock might have gone backwards: {err}");
@@ -155,7 +158,7 @@ impl Server {
             });
             if diff >= MESSAGE_RATE {
                 if let Ok(text) = str::from_utf8(&bytes) {
-                    sinner.forgive();
+                    self.sinners.entry(author_addr.ip()).or_insert(Sinner::new()).forgive();
                     author.last_message = now;
                     if author.authed {
                         println!("INFO: Client {author_addr} sent message {bytes:?}", author_addr=Sens(author_addr));
@@ -175,7 +178,6 @@ impl Server {
                             });
                         } else {
                             // TODO: let the user know that they were banned after this attempt
-                            sinner.strike();
                             println!("INFO: {} failed authorization!", Sens(author_addr));
                             let _ = writeln!(author.conn.as_ref(), "Invalid token! Bruh!").map_err(|err| {
                                 eprintln!("ERROR: could not notify client {} about invalid token: {}", Sens(author_addr), Sens(err));
@@ -184,42 +186,36 @@ impl Server {
                                 eprintln!("ERROR: could not shutdown {}: {}", Sens(author_addr), Sens(err));
                             });
                             self.clients.remove(&author_addr);
+                            // TODO: each IP strike must be properly documented in the source code giving the reasoning
+                            // behind it.
+                            self.strike_ip(author_addr.ip());
                         }
                     }
                 } else {
-                    if sinner.strike() {
-                        println!("INFO: Client {author_addr} got banned", author_addr=Sens(author_addr));
-                        self.clients.retain(|addr, client| {
-                            if addr.ip() == author_addr.ip() {
-                                let _ = writeln!(client.conn.as_ref(), "You are banned MF").map_err(|err| {
-                                    eprintln!("ERROR: Could not send banned message to {addr}: {err}", addr=Sens(addr), err=Sens(err));
-                                });
-                                let _ = client.conn.shutdown(Shutdown::Both).map_err(|err| {
-                                    eprintln!("ERROR: Could not shutdown socket for {addr}: {err}", addr=Sens(addr), err=Sens(err));
-                                });
-                                return false
-                            }
-                            true
-                        });
-                    }
+                    self.strike_ip(author_addr.ip())
                 }
             } else {
-                if sinner.strike() {
-                    println!("INFO: Client {author_addr} got banned", author_addr=Sens(author_addr));
-                    self.clients.retain(|addr, client| {
-                        if addr.ip() == author_addr.ip() {
-                            let _ = writeln!(client.conn.as_ref(), "You are banned MF").map_err(|err| {
-                                eprintln!("ERROR: could not send banned message to {addr}: {err}", addr=Sens(addr), err=Sens(err));
-                            });
-                            let _ = client.conn.shutdown(Shutdown::Both).map_err(|err| {
-                                eprintln!("ERROR: could not shutdown socket for {addr}: {err}", addr=Sens(addr), err=Sens(err));
-                            });
-                            return false
-                        }
-                        true
-                    });
-                }
+                self.strike_ip(author_addr.ip());
             }
+        }
+    }
+
+    fn strike_ip(&mut self, ip: IpAddr) {
+        let sinner = self.sinners.entry(ip).or_insert(Sinner::new());
+        if sinner.strike() {
+            println!("INFO: IP {ip} got banned", ip=Sens(ip));
+            self.clients.retain(|addr, client| {
+                if addr.ip() == ip {
+                    let _ = writeln!(client.conn.as_ref(), "You are banned Sinner!").map_err(|err| {
+                        eprintln!("ERROR: could not send banned message to {addr}: {err}", addr=Sens(addr), err=Sens(err));
+                    });
+                    let _ = client.conn.shutdown(Shutdown::Both).map_err(|err| {
+                        eprintln!("ERROR: could not shutdown socket for {addr}: {err}", addr=Sens(addr), err=Sens(err));
+                    });
+                    return false
+                }
+                true
+            });
         }
     }
 }
@@ -267,27 +263,18 @@ fn client(stream: Arc<TcpStream>, messages: Sender<Message>) -> Result<()> {
         eprintln!("ERROR: Could not get peer address: {err}", err=Sens(err));
     })?;
 
-    messages.send(Message::ClientConnected{author: stream.clone(), author_addr}).map_err(|err| {
-        eprintln!("ERROR: Could not send message from {author_addr} to the server thread: {err}", author_addr=Sens(author_addr), err=Sens(err))
-    })?;
-
+    messages.send(Message::ClientConnected{author: stream.clone(), author_addr}).expect("send client connected");
     let mut buffer = [0; 64];
     loop {
         let n = stream.as_ref().read(&mut buffer).map_err(|err| {
             eprintln!("ERROR: could not read message from {author_addr}: {err}", author_addr=Sens(author_addr), err=Sens(err));
-            let _ = messages.send(Message::ClientDisconnected{author_addr}).map_err(|err| {
-                eprintln!("ERROR: Could not send message to the server thread: {err}")
-            });
+            messages.send(Message::ClientDisconnected{author_addr}).expect("send client disconnected");
         })?;
         if n > 0 {
             let bytes = buffer[0..n].iter().cloned().filter(|x| *x >= 32).collect();
-            messages.send(Message::NewMessage{author_addr, bytes}).map_err(|err| {
-                eprintln!("ERROR: could not send message to the server thread: {err}");
-            })?;
+            messages.send(Message::NewMessage{author_addr, bytes}).expect("send new message");
         } else {
-            let _ = messages.send(Message::ClientDisconnected{author_addr}).map_err(|err| {
-                eprintln!("ERROR: could not send message to the server thread: {err}")
-            });
+            messages.send(Message::ClientDisconnected{author_addr}).expect("send client disconnected");
             break;
         }
     }

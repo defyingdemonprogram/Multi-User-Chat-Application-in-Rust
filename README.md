@@ -8,7 +8,7 @@
    cargo build
    cargo run --bin server
    ```
-   The generated token will be saved in the `./TOKEN` file.
+   The generated authentication token will be stored in the `./TOKEN` file. The client will need this token to connect to the server.
 
 2. **Connect to the Server**
 

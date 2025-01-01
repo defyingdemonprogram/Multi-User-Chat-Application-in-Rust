@@ -306,7 +306,7 @@ fn main() -> io::Result<()> {
                                     // TODO: tab autocompletion should scroll through different
                                     // variants on each TAB press
                                     prompt.clear();
-                                    prompt.insert("/");
+                                    prompt.insert('/');
                                     prompt.insert_str(command.name);
                                     prompt.insert_str(&rest);
                                     prompt.cursor = command.name.len() + 1;

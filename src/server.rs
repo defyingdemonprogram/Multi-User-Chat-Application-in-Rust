@@ -3,6 +3,7 @@ use std::str;
 use std::io::{Read, Write};
 use std::result;
 use std::thread;
+use std::fs;
 use std::collections::HashMap;
 use std::fmt::Write as OtherWrite;
 use std::time::{SystemTime, Duration};
@@ -241,8 +242,12 @@ fn generate_token() -> Result<String> {
 
 fn main() -> Result<()> {
     let token = generate_token()?;
+    let token_file_path = "./TOKEN";
+    fs::write(token_file_path, token.as_bytes()).map_err(|err| {
+        eprintln!("ERROR: could not create token file {token_file_path}: {err}");
+    })?;
 
-    println!("INFO: Token: {token}");
+    println!("INFO: check {token_file_path} file for the token");
     let address = format!("127.0.0.1:{PORT}");
     let listener = TcpListener::bind(&address).map_err(|err| {
         eprintln!("ERROR: could not bind {address}: {err}", address=Sens(&address), err=Sens(err))

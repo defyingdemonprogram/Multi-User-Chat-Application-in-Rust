@@ -3,14 +3,16 @@ use std::str;
 use std::io;
 use std::io::{Read, Write};
 use std::result;
-use std::thread;
 use std::fs;
 use std::collections::HashMap;
 use std::fmt::Write as OtherWrite;
 use std::time::{SystemTime, Duration};
-use std::net::{TcpListener, TcpStream, IpAddr, SocketAddr, Shutdown};
+use std::net::{IpAddr, SocketAddr, Shutdown};
 
 use getrandom::getrandom;
+use mio::net::{TcpListener, TcpStream};
+use mio::{Poll, Interest, Token, Events};
+
 
 type Result<T> = result::Result<T, ()>;
 
@@ -39,6 +41,7 @@ struct Client {
     last_message: SystemTime,
     connected_at: SystemTime,
     authed: bool,
+    addr: SocketAddr,
 }
 
 enum Sinner {
@@ -72,7 +75,7 @@ impl Sinner {
 }
 
 struct Server {
-    clients: HashMap<SocketAddr, Client>,
+    clients: HashMap<Token, Client>,
     sinners: HashMap<IpAddr, Sinner>,
     token: String,
 }
@@ -86,7 +89,7 @@ impl Server {
         }
     }
 
-    fn client_connected(&mut self, mut author: TcpStream, author_addr: SocketAddr) {
+    fn client_connected(&mut self, mut author: TcpStream, author_addr: SocketAddr, token: Token) {
         let now = SystemTime::now();
 
         if let Some(sinner) = self.sinners.get_mut(&author_addr.ip()) {
@@ -98,6 +101,7 @@ impl Server {
                     });
                     if diff < BAN_LIMIT {
                         let secs = (BAN_LIMIT - diff).as_secs_f32();
+                        // TODO: probably remove this logging, cause banned MFs may still keep connecting and overflow us with logs
                         println!("INFO: Client {author_addr} tried to connected, but that MF is banned for {secs} secs", author_addr=Sens(author_addr));
                         let _ = writeln!(author, "You are banned MF: {secs} secs left").map_err(|err| {
                             eprintln!("ERROR: could not send banned message to {author_addr}: {err}", author_addr=Sens(author_addr), err=Sens(err));
@@ -115,16 +119,18 @@ impl Server {
         }
 
         println!("INFO: Client {author_addr} connected", author_addr=Sens(author_addr));
-        self.clients.insert(author_addr.clone(), Client {
+        self.clients.insert(token, Client {
             conn: author,
             last_message: now - 2*MESSAGE_RATE,
             connected_at: now,
             authed: false,
+            addr: author_addr,
         });
     }
 
-    fn client_read(&mut self, author_addr: SocketAddr) {
-        if let Some(author) = self.clients.get_mut(&author_addr) {
+    fn client_read(&mut self, token: Token) {
+        if let Some(author) = self.clients.get_mut(&token) {
+            let author_addr: SocketAddr = author.addr.clone();
             let mut buffer = [0; 64];
             let bytes: Vec<_> = match author.conn.read(&mut buffer) {
                 Ok(0) => {
@@ -134,14 +140,14 @@ impl Server {
                     // TODO: if the disconnected client was not authorized we may probably want to strike their
                     // IP, because they are probably constantly connecting/disconnecting trying to evade the
                     // strike.
-                    self.clients.remove(&author_addr);
+                    self.clients.remove(&token);
                     return;
                 }
                 Ok(n) => buffer[0..n].iter().cloned().filter(|x| *x >= 32).collect(),
                 Err(err) => {
                     if err.kind() != io::ErrorKind::WouldBlock {
                         eprintln!("ERROR: could not read message from {author_addr}: {err}", author_addr=Sens(author_addr), err=Sens(err));
-                        self.clients.remove(&author_addr);
+                        self.clients.remove(&token);
                     }
                     return;
                 }
@@ -165,8 +171,8 @@ impl Server {
             author.last_message = now;
             if author.authed {
                 println!("INFO: Client {author_addr} sent message {bytes:?}", author_addr=Sens(author_addr));
-                for (addr, client) in self.clients.iter_mut() {
-                    if *addr != author_addr && client.authed {
+                for (client_token, client) in self.clients.iter_mut() {
+                    if *client_token != token && client.authed {
                         let _ = writeln!(client.conn, "{text}").map_err(|err| {
                             eprintln!("ERROR: could not broadcast message to all the clients from {author_addr}: {err}", author_addr=Sens(author_addr), err=Sens(err))
                         });
@@ -182,7 +188,7 @@ impl Server {
                     let _ = author.conn.shutdown(Shutdown::Both).map_err(|err| {
                         eprintln!("ERROR: could not shutdown {}: {}", Sens(author_addr), Sens(err));
                     });
-                    self.clients.remove(&author_addr);
+                    self.clients.remove(&token);
                     // TODO: each IP strike must be properly documented in the source code giving the reasoning
                     // behind it.
                     self.strike_ip(author_addr.ip());
@@ -202,7 +208,8 @@ impl Server {
         let sinner = self.sinners.entry(ip).or_insert(Sinner::new());
         if sinner.strike() {
             println!("INFO: IP {ip} got banned", ip=Sens(ip));
-            self.clients.retain(|addr, client| {
+            self.clients.retain(|_token, client| {
+                let addr: SocketAddr = client.addr.clone();
                 if addr.ip() == ip {
                     let _ = writeln!(client.conn, "You are banned Sinner!").map_err(|err| {
                         eprintln!("ERROR: could not send banned message to {addr}: {err}", addr=Sens(addr), err=Sens(err));
@@ -217,14 +224,12 @@ impl Server {
         }
     }
 
-    fn update(&mut self) {
-        let addrs: Vec<SocketAddr> = self.clients.keys().cloned().collect();
-        for addr in addrs {
-            self.client_read(addr);
-        }
+    fn update(&mut self, token: Token) {
+        self.client_read(token);
 
         // TODO: keep waiting connections in a separate hash map
-        self.clients.retain(|addr, client| {
+        self.clients.retain(|_, client| {
+            let addr: SocketAddr = client.addr.clone();
             if !client.authed {
                 let now = SystemTime::now();
                 let diff = now.duration_since(client.connected_at).unwrap_or_else(|err| {
@@ -268,31 +273,44 @@ fn main() -> Result<()> {
 
     println!("INFO: check {token_file_path} file for the token");
     let address = format!("127.0.0.1:{PORT}");
-    let listener = TcpListener::bind(&address).map_err(|err| {
+    let mut listener = TcpListener::bind(address.parse().unwrap()).map_err(|err| {
         eprintln!("ERROR: could not bind {address}: {err}", address=Sens(&address), err=Sens(err))
     })?;
-    listener.set_nonblocking(true).map_err(|err| {
-        eprintln!("ERROR: could not set server socket as nonblocking: {err}");
+    let mut poll = Poll::new().map_err(|err| {
+        eprintln!("ERROR: could not create Poll object: {err}");
     })?;
-    println!("INFO: listening to {}", Sens(address));
+    let mut events = Events::with_capacity(1024);
+    let mut counter = 0;
+
+    poll.registry().register(&mut listener, Token(counter), Interest::READABLE).map_err(|err| {
+        eprintln!("ERROR: could not register server socket in the Poll object: {err}")
+    })?;
 
     let mut server = Server::from_token(token);
 
+    println!("INFO: listening to {}", Sens(address));
     loop {
-        match listener.accept() {
-            Ok((stream, author_addr)) => {
-                if let Err(err) = stream.set_nonblocking(true) {
-                    eprintln!("ERROR: could not mark connection as non-blocking: {err}");
-                    break;
-                }
-                server.client_connected(stream, author_addr);
-            }
-            Err(err) => if err.kind() != io::ErrorKind::WouldBlock {
-                eprintln!("ERROR: could not accept connection: {err}")
+        if let Err(err) = poll.poll(&mut events, None) {
+            eprintln!("ERROR: Failed to poll: {err}");
+            continue;
+        }
+        for token in events.iter().map(|e| e.token()) {
+            match token {
+                Token(0) => match listener.accept() {
+                    Ok((mut stream, author_addr)) => {
+                        counter += 1;
+                        let token = Token(counter);
+                        match poll.registry().register(&mut stream, token, Interest::READABLE) {
+                            Ok(_) => server.client_connected(stream, author_addr, token),
+                            Err(err) => eprintln!("ERROR: could not register client socket in the Poll object: {err}"),
+                        }
+                    }
+                    Err(err) => if err.kind() != io::ErrorKind::WouldBlock {
+                        eprintln!("ERROR: could not accept connection: {err}")
+                    }
+                },
+                token => server.update(token),
             }
         }
-        server.update();
-        thread::sleep(Duration::from_millis(16));
     }
-    Ok(())
 }

@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::fmt::Write as OtherWrite;
 use std::time::{SystemTime, Duration};
 use std::sync::Arc;
-use std::sync::mpsc::{Sender, Receiver, channel, RecvTimeoutError};
 use std::net::{TcpListener, TcpStream, IpAddr, SocketAddr, Shutdown};
 
 use getrandom::getrandom;
@@ -34,24 +33,6 @@ impl<T: fmt::Display> fmt::Display for Sens<T> {
             inner.fmt(f)
         }
     }
-}
-
-enum ClientEvent {
-    Connected {
-        author_addr: SocketAddr,
-        author: Arc<TcpStream>,
-    },
-    Disconnected {
-        author_addr: SocketAddr,
-    },
-    Errored {
-        author_addr: SocketAddr,
-        err: io::Error,
-    },
-    Read {
-        author_addr: SocketAddr,
-        bytes: Box<[u8]>
-    },
 }
 
 struct Client {
@@ -119,7 +100,7 @@ impl Server {
                     if diff < BAN_LIMIT {
                         let mut author = author.as_ref();
                         let secs = (BAN_LIMIT - diff).as_secs_f32();
-                        // println!("INFO: Client {author_addr} tried to connected, by that MF is banned for {secs} secs", author_addr=Sens(author_addr));
+                        println!("INFO: Client {author_addr} tried to connected, by that MF is banned for {secs} secs", author_addr=Sens(author_addr));
                         let _ = writeln!(author, "You are banned MF: {secs} secs left").map_err(|err| {
                             eprintln!("ERROR: could not send banned message to {author_addr}: {err}", author_addr=Sens(author_addr), err=Sens(err));
                         });
@@ -228,67 +209,29 @@ impl Server {
             });
         }
     }
-}
 
-fn server(events: Receiver<ClientEvent>, token: String) -> Result<()> {
-    let mut server = Server::from_token(token);
-    loop {
-        match events.recv_timeout(Duration::ZERO) {
-            Ok(msg) => match msg {
-                ClientEvent::Connected{author, author_addr} => server.client_connected(author, author_addr),
-                ClientEvent::Disconnected{author_addr} => server.client_disconnected(author_addr),
-                ClientEvent::Read{author_addr, bytes} => server.client_read(author_addr, &bytes),
-                ClientEvent::Errored{author_addr, err} => server.client_errored(author_addr, err),
-            },
-            Err(RecvTimeoutError::Timeout) => {
-                // TODO: keep waiting connections in a separate hash map
-                server.clients.retain(|addr, client| {
-                    if !client.authed {
-                        let now = SystemTime::now();
-                        let diff = now.duration_since(client.connected_at).unwrap_or_else(|err| {
-                            eprintln!("ERROR: slowloris time limit check: the clock might have gone backwards: {err}");
-                            SLOWLORIS_LIMIT
-                        });
-                        if diff >= SLOWLORIS_LIMIT {
-                            // TODO: disconnect everyone from addr.ip()
-                            server.sinners.entry(addr.ip()).or_insert(Sinner::new()).strike();
-                            let _ = client.conn.shutdown(Shutdown::Both).map_err(|err| {
-                                eprintln!("ERROR: could not shutdown socket for {addr}: {err}", addr=Sens(addr), err=Sens(err));
-                            });
-                            return false;
-                        }
-                    }
-                    true
+    fn prune_slowlorises(&mut self) {
+        // TODO: keep waiting connections in a separate hash map
+        self.clients.retain(|addr, client| {
+            if !client.authed {
+                let now = SystemTime::now();
+                let diff = now.duration_since(client.connected_at).unwrap_or_else(|err| {
+                    eprintln!("ERROR: slowloris time limit check: the clock might have gone backwards: {err}");
+                    SLOWLORIS_LIMIT
                 });
+                if diff >= SLOWLORIS_LIMIT {
+                    // TODO: disconnect everyone from addr.ip()
+                    self.sinners.entry(addr.ip()).or_insert(Sinner::new()).strike();
+                    let _ = client.conn.shutdown(Shutdown::Both).map_err(|err| {
+                        eprintln!("ERROR: could not shutdown socket for {addr}: {err}", addr = Sens(addr), err = Sens(err));
+                    });
+                    return false;
+                }
             }
-            Err(RecvTimeoutError::Disconnected) => {
-                eprintln!("ERROR: message receiver disconnected");
-                return Err(())
-            }
-        }
-    }
-}
+            true
+        });
 
-fn client(stream: Arc<TcpStream>, author_addr: SocketAddr, events: Sender<ClientEvent>) -> Result<()> {
-    events.send(ClientEvent::Connected{author: stream.clone(), author_addr}).expect("send client connected");
-    let mut buffer = [0; 64];
-    loop {
-        match stream.as_ref().read(&mut buffer) {
-            Ok(0) => {
-                events.send(ClientEvent::Disconnected{author_addr}).expect("send client disconnected");
-                break;
-            }
-            Ok(n) => {
-                let bytes = buffer[0..n].iter().cloned().filter(|x| *x >= 32).collect();
-                events.send(ClientEvent::Read{author_addr, bytes}).expect("send new message");
-            }
-            Err(err) => {
-                events.send(ClientEvent::Errored{author_addr, err}).expect("send client errored");
-                break;
-            }
-        }
     }
-    Ok(())
 }
 
 fn generate_token() -> Result<String> {
@@ -316,25 +259,60 @@ fn main() -> Result<()> {
     let listener = TcpListener::bind(&address).map_err(|err| {
         eprintln!("ERROR: could not bind {address}: {err}", address=Sens(&address), err=Sens(err))
     })?;
+    listener.set_nonblocking(true).map_err(|err| {
+        eprintln!("ERROR: could not set server socket as nonblocking: {err}");
+    })?;
     println!("INFO: listening to {}", Sens(address));
 
-    let (message_sender, message_receiver) = channel();
-    thread::spawn(|| server(message_receiver, token));
+    let mut conns = HashMap::<SocketAddr, Arc<TcpStream>>::new();
+    let mut server = Server::from_token(token);
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
+                if let Err(err) = stream.set_nonblocking(true) {
+                    eprintln!("ERROR: could not mark connection as non-blocking: {err}");
+                    break;
+                }
                 match stream.peer_addr() {
                     Ok(author_addr) => {
                         let stream = Arc::new(stream);
-                        let message_sender = message_sender.clone();
-                        thread::spawn(move || client(stream, author_addr, message_sender));
+                        server.client_connected(stream.clone(), author_addr);
+                        conns.insert(author_addr, stream);
                     }
                     Err(err) => eprintln!("ERROR: could not get peer address: {err}", err = Sens(err)),
                 }
             }
-            Err(err) => eprintln!("ERROR: Could not accept connection: {err}"),
+            Err(err) => if err.kind() != io::ErrorKind::WouldBlock {
+                eprintln!("ERROR: could not accept connection: {err}")
+            }
         }
+        
+        let mut buffer = [0; 64];
+
+        conns.retain(|&author_addr, stream| {
+            match stream.as_ref().read(&mut buffer) {
+                Ok(0) => {
+                    server.client_disconnected(author_addr);
+                    false
+                }
+                Ok(n) => {
+                    let bytes: Vec<_> = buffer[0..n].iter().cloned().filter(|x| *x >= 32).collect();
+                    server.client_read(author_addr, &bytes);
+                    true
+                }
+                Err(err) => if err.kind() == io::ErrorKind::WouldBlock {
+                    true
+                } else {
+                    server.client_errored(author_addr, err);
+                    false
+                }
+            }
+        });
+
+        server.prune_slowlorises();
+
+        thread::sleep(Duration::from_millis(16));
     }
     Ok(())
 }

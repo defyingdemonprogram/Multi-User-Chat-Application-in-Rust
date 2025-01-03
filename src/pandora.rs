@@ -1,7 +1,8 @@
 use std::env;
 use std::result;
-use std::process::ExitCode;
 use std::io::Write;
+use std::process::ExitCode;
+use std::net::TcpStream;
 use getrandom::getrandom;
 
 type Result<T> = result::Result<T, ()>;

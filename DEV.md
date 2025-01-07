@@ -192,7 +192,7 @@ Rust is a **statically typed** language, which means it requires knowing the typ
 | 128-bit  | `i128` | `u128`   |
 | Arch     | `isize`| `usize`  |
 
-For signed integers, the range is from \(-2^{n-1}\) to \(2^{n-1}-1\), where \(n\) is the number of bits. Unsigned integers range from \(0\) to \(2^n - 1\). The `isize` and `usize` types adapt to the architecture of your computer: they are 64-bit on a 64-bit architecture and 32-bit on a 32-bit architecture.
+For signed integers, the range is from $-2^{n-1}$ to $2^{n-1}-1$, where $n$ is the number of bits. Unsigned integers range from $0$ to $2^n - 1$. The `isize` and `usize` types adapt to the architecture of your computer: they are 64-bit on a 64-bit architecture and 32-bit on a 32-bit architecture.
 
 **Integer Literals** can be written in various formats:
 
@@ -205,6 +205,196 @@ For signed integers, the range is from \(-2^{n-1}\) to \(2^{n-1}-1\), where \(n\
 Be cautious of integer overflow, which occurs when a value exceeds the variable's range. For details on handling overflow and panic modes, refer to the [Rust documentation](https://doc.rust-lang.org/book/ch03-02-data-types.html).
 
 Rust has two floating point `f64`(double precision) which is default in rust and `f32` which is single precision.
+
+### Loops
+In Rust, loops are used to repeat code execution:
+
+1. **`loop`**: Infinite loop, exited with `break`.
+   ```rust
+   loop {
+       println!("Infinite loop");
+       break;
+   }
+   ```
+
+2. **`while`**: Loops while a condition is true.
+   ```rust
+   let mut x = 0;
+   while x < 5 {
+       println!("{}", x);
+       x += 1;
+   }
+   ```
+
+3. **`for`**: Iterates over a range or collection.
+
+    - Iterating over a range (exclusive):
+    ```rust
+    for i in 0..5 { // Iterates over 0, 1, 2, 3, 4
+        println!("{}", i);
+    }
+    ```
+
+    - Iterating over a range (inclusive):
+    ```rust
+    for i in 0..=5 { // Iterates over 0, 1, 2, 3, 4, 5
+        println!("{}", i);
+    }
+    ```
+
+4. **Control flow**: Use `break` to exit a loop and `continue` to skip an iteration.
+   ```rust
+   for i in 0..10 {
+       if i == 5 { continue; }
+       if i == 8 { break; }
+       println!("{}", i);
+   }
+   ```
+
+5. **Loop labels**: For controlling nested loops.
+   ```rust
+   'outer: for i in 0..3 {
+       for j in 0..3 {
+           if i == 1 { break 'outer; }
+       }
+   }
+   ```
+
+### Closure
+A **closure** in Rust is an anonymous function that can capture and use variables from its surrounding environment. It’s similar to a regular function, but the key difference is that it can access variables from the scope where it is defined. Closures are a powerful feature in Rust, and they are frequently used for tasks like passing behavior as arguments to functions, deferred execution, and callback functions.
+
+#### **Syntax of a Closure in Rust**
+
+A closure is defined using the `|` symbols for parameters, followed by the closure body. The syntax is as follows:
+
+```rust
+|param1, param2| { 
+    // Closure body
+    // You can use param1, param2, and other captured variables here
+}
+```
+
+- **No Parameters**:
+  ```rust
+  let closure = || { println!("No parameters"); };
+  closure(); // Calling the closure
+  ```
+
+- **With Parameters**:
+  ```rust
+  let add = |a, b| { a + b };
+  println!("{}", add(5, 3)); // Output: 8
+  ```
+
+#### **When Are Closures Used in Rust?**
+
+1. **Higher-Order Functions**:
+   Closures are often passed as arguments to functions that take a function or a callback. Many methods in Rust's standard library, such as `map`, `filter`, and `fold`, take closures to operate on data structures.
+
+   Example with `map`:
+   ```rust
+   let numbers = vec![1, 2, 3, 4, 5];
+   let doubled: Vec<i32> = numbers.iter().map(|x| x * 2).collect();
+   println!("{:?}", doubled); // Output: [2, 4, 6, 8, 10]
+   ```
+
+   Here, the closure `|x| x * 2` is passed to `map` to double each element in the vector.
+
+2. **Capturing the Environment**:
+   One of the defining features of closures in Rust is that they can **capture variables** from the environment in which they are defined. This is different from regular functions, which can only access variables passed explicitly as parameters.
+
+   Example with capturing the environment:
+   ```rust
+   let x = 5;
+   let closure = |y| x + y;
+   println!("{}", closure(3)); // Output: 8
+   ```
+   In this case, the closure captures `x` from the surrounding scope and uses it within the closure body.
+
+3. **Deferred Execution (Lazy Evaluation)**:
+   Closures can be used to delay execution, making them useful in scenarios like lazy evaluation or setting up deferred computations.
+
+   Example with deferred execution:
+   ```rust
+   let closure = || {
+       println!("This will be executed later.");
+   };
+   // The closure is not executed until we call it
+   closure();
+   ```
+
+4. **Event Handling and Callbacks**:
+   Closures are often used as event handlers or callbacks because they can be defined inline and capture the necessary context.
+
+   Example:
+   ```rust
+   let callback = |x| {
+       println!("Callback received: {}", x);
+   };
+   // Some event triggers the callback
+   callback(42); // Output: Callback received: 42
+   ```
+
+5. **Asynchronous Code**:
+   Closures are commonly used with asynchronous code, where the closure captures data and is passed around for deferred execution when an asynchronous task completes.
+
+   Example:
+   ```rust
+   use std::thread;
+
+   let closure = |x: i32| x + 1;
+   let handle = thread::spawn(move || {
+       println!("Result: {}", closure(5)); // Output: Result: 6
+   });
+
+   handle.join().unwrap();
+   ```
+
+6. **Implementing Custom Functionality for Traits**:
+   Closures can also be used to implement custom functionality for traits like `Fn`, `FnMut`, and `FnOnce`. These traits define how a closure can be called and whether it can mutate or take ownership of variables captured from its environment.
+
+#### **Types of Closures in Rust**
+
+Closures are categorized based on how they capture variables from the environment:
+
+1. **`Fn`**: The closure can be called multiple times without modifying the captured variables. It borrows variables from the environment.
+2. **`FnMut`**: The closure can be called multiple times, and it **mutates** the captured variables. It has mutable access to the environment.
+3. **`FnOnce`**: The closure can be called only once because it takes ownership of the captured variables.
+
+The closure type is inferred by the compiler based on how the variables are captured.
+
+---
+
+### **Example of Closures with Different Types of Capturing**
+
+1. **By Borrowing** (`Fn`):
+   ```rust
+   let x = 5;
+   let closure = || {
+       println!("{}", x); // Borrow x
+   };
+   closure();
+   ```
+
+2. **By Mutating** (`FnMut`):
+   ```rust
+   let mut x = 5;
+   let mut closure = || {
+       x += 1; // Mutate x
+   };
+   closure();
+   println!("{}", x); // Output: 6
+   ```
+
+3. **By Taking Ownership** (`FnOnce`):
+   ```rust
+   let x = String::from("Hello");
+   let closure = move || {
+       println!("{}", x); // Takes ownership of x
+   };
+   closure();
+   ```
+
 
 ### FAQ
 
@@ -240,8 +430,49 @@ Rust has two floating point `f64`(double precision) which is default in rust and
      println!("Hello, World!");
      ```
 
+3. **What are the differences between `println!` and `eprintln!`?**
 
-##### References:
+    | Feature              | `println!`                          | `eprintln!`                        |
+    |----------------------|-------------------------------------|------------------------------------|
+    | **Output Stream**     | Standard Output (stdout)           | Standard Error (stderr)           |
+    | **Buffering**         | Buffered (may not appear immediately) | Unbuffered (appears immediately)  |
+    | **Use Case**          | General messages or normal output  | Error messages or diagnostics     |
+
+    Using `eprintln!` for errors and `println!` for regular output allows programs to clearly distinguish between normal output and diagnostic information.
+
+    - **Redirection**:
+    - Both `stdout` and `stderr` can be redirected separately in most operating systems:
+        - Example:
+        ```sh
+        ./program > output.log 2> error.log
+        ```
+        - `stdout` will be saved to `output.log`.
+        - `stderr` will be saved to `error.log`.
+
+    To run the program and redirect the output streams:
+    ```sh
+    $ cargo run > output.txt 2> error.txt
+    ```
+
+4. **What are `&` and `*` in Rust?**
+
+    In Rust:
+
+    - **`&`**: Creates a **reference** to a value (borrowing it).
+        - `&x` creates an immutable reference to `x`.
+        - `&mut x` creates a mutable reference to `x`.
+
+    - **`*`**: **Dereferences** a reference, allowing access to the value it points to.
+        - `*y` accesses the value `y` references.
+
+    ### Example:
+    ```rust
+    let x = 5;
+    let y = &x;   // Immutable reference to `x`
+    println!("{}", *y); // Dereference `y` to access the value (5)
+    ```
+
+### References:
 **From Rust Documentation**
 - [Rust Book](https://doc.rust-lang.org/book/): The official Rust programming language book, offering comprehensive guidance on learning Rust.
 - [Module fmt](https://doc.rust-lang.org/std/fmt/): Provides formatting functionality for strings, including printing and formatting with placeholders.

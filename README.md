@@ -17,13 +17,29 @@
    $ cargo run --bin client
    > /connect <server ip> <authentication token>
    ```
-
 3. **Perform a Stress Test on the Server**
 
-   To simulate multiple requests for load testing, use:
+   To evaluate server performance under stress, use the following command:
+
    ```bash
-   cat /dev/urandom | nc 127.0.0.1 6969
+   cargo run --bin pandora <attack_type> <ip>
    ```
+
+   **Available Attack Types**:
+   - **`dragon`**: Establishes connections and sends random data in bulk.  
+   - **`hydra`**: Opens as many simultaneous connections as possible.  
+   - **`gnome`**: Repeatedly opens and closes connections.  
+
+   **Example**: To initiate the `hydra` attack on the server, run:  
+   ```bash
+   cargo run --bin pandora hydra 127.0.0.1:6969
+   ```
+
+   > **Deprecated Method**:
+   > For a simpler, outdated approach to simulate load by sending multiple requests:  
+   >```bash
+   > cat /dev/urandom | nc 127.0.0.1 6969
+   >```
 
 #### Command for the Client
 - `/connect <server ip> <token>`: Connects client to server
